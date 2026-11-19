@@ -116,7 +116,7 @@ func TestRulesLogsAndAdopt(t *testing.T) {
 
 func openTest(t *testing.T) *Store {
 	t.Helper()
-	st, err := Open(filepath.Join(t.TempDir(), "csmock.db"))
+	st, err := Open(filepath.Join(t.TempDir(), "MockServerGo.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

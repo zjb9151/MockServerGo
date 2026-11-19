@@ -14,7 +14,7 @@ import (
 )
 
 func TestAdminPagesAndAPI(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "csmock.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "MockServerGo.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

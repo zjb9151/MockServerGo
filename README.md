@@ -1,4 +1,4 @@
-# CSMock
+# MockServerGo
 
 单文件运行的本地 HTTP Mock 服务。规则存在程序同级的 SQLite 里，用浏览器配置，不需要额外安装数据库或运行时。
 
@@ -7,21 +7,21 @@
 需要 Go 1.21 或更高版本。纯 Go SQLite，编译时不用 CGO。
 
 ```powershell
-go build -o csmock.exe .
-.\csmock.exe
+go build -o MockServerGo.exe .
+.\MockServerGo.exe
 ```
 
 启动后：
 
 - Mock 服务：<http://127.0.0.1:8080>
 - 配置页面：<http://127.0.0.1:9090>
-- 数据库：与 `csmock.exe` 同级的 `data\csmock.db`
+- 数据库：与 `MockServerGo.exe` 同级的 `data\MockServerGo.db`
 
 常用参数：
 
 ```powershell
-.\csmock.exe -mock 127.0.0.1:8080 -admin 127.0.0.1:9090 -data D:\mock-data
-.\csmock.exe -rules examples\rules.example.yaml -watch
+.\MockServerGo.exe -mock 127.0.0.1:8080 -admin 127.0.0.1:9090 -data D:\mock-data
+.\MockServerGo.exe -rules examples\rules.example.yaml -watch
 ```
 
 `-mock` 和 `-admin` 会覆盖配置页里保存的监听地址。不写这两个参数时，使用上次在页面里保存的地址。修改监听地址后需要重启。`-watch` 会每 2 秒检查规则文件，保存后按文件内容重新导入。

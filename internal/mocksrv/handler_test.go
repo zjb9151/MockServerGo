@@ -176,7 +176,7 @@ func saveRule(t *testing.T, st *store.Store, rule model.Rule) model.Rule {
 
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "csmock.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "MockServerGo.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

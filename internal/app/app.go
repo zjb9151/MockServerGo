@@ -38,7 +38,10 @@ func Run(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	dbPath := filepath.Join(dataDir, "csmock.db")
+	if err := adoptOldDatabase(dataDir); err != nil {
+		return err
+	}
+	dbPath := filepath.Join(dataDir, "MockServerGo.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
@@ -113,7 +116,7 @@ func Run(cfg Config) error {
 	go serve(errCh, "Mock 服务", mockServer)
 	go serve(errCh, "配置页面", adminServer)
 
-	log.Printf("CSMock %s", model.Version)
+	log.Printf("MockServerGo %s", model.Version)
 	log.Printf("Mock 服务    http://%s    （绑定 %s）", browseHost(cfg.MockAddr), cfg.MockAddr)
 	log.Printf("配置页面     http://%s", browseHost(cfg.AdminAddr))
 	log.Printf("数据库       %s", dbPath)
@@ -153,6 +156,37 @@ func shutdown(servers ...*http.Server) {
 	for _, srv := range servers {
 		_ = srv.Shutdown(ctx)
 	}
+}
+
+// adoptOldDatabase 把旧文件名 csmock.db 改成 MockServerGo.db，已有规则不会丢。
+func adoptOldDatabase(dataDir string) error {
+	next := filepath.Join(dataDir, "MockServerGo.db")
+	if _, err := os.Stat(next); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	prev := filepath.Join(dataDir, "csmock.db")
+	if _, err := os.Stat(prev); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		from := prev + suffix
+		to := next + suffix
+		if _, err := os.Stat(from); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		if err := os.Rename(from, to); err != nil {
+			return fmt.Errorf("把 %s 改名为 %s 失败: %w", filepath.Base(from), filepath.Base(to), err)
+		}
+	}
+	return nil
 }
 
 func resolveDataDir(flag string) (string, error) {

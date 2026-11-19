@@ -5,3 +5,5 @@
 *.db-shm
 /csmock
 /csmock.exe
+/MockServerGo
+/MockServerGo.exe
