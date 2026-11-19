@@ -29,7 +29,7 @@ func TestAdminPagesAndAPI(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	page := get(t, srv, "/")
-	if page.StatusCode != 200 || !strings.Contains(page.Body, "CSMock") || !strings.Contains(page.Body, "/app.js") {
+	if page.StatusCode != 200 || !strings.Contains(page.Body, "MockServerGo") || !strings.Contains(page.Body, "/app.js") {
 		t.Fatalf("page %#v", page.StatusCode)
 	}
 	if css := get(t, srv, "/app.css"); css.StatusCode != 200 || !strings.Contains(css.Body, "--teal") {

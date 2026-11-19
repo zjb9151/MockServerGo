@@ -3,7 +3,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const titles = {
   overview: ["概览", "查看服务地址、接口数量和最近打到 Mock 端口的请求"],
-  interfaces: ["接口", "先新建接口，再为每个接口添加规则。规则用来区分同一次调用的不同响应"],
+  interfaces: ["接口管理", "先新建接口，再为每个接口添加规则。规则用来区分同一次调用的不同响应"],
   live: ["实时监控", "按接口查看输入和输出，也可以再选一条规则"],
   logs: ["请求日志", "每次请求都会记下来，方便对照实际收到的内容"],
   state: ["场景状态", "用来模拟登录前后等流程，规则可以读取并改写这些变量"],
@@ -409,7 +409,7 @@ function paintEditor() {
   $("#back-rules").onclick = () => { state.editing = null; render(); };
   $("#view").innerHTML = `
     <form id="rule-form" data-id="${rule.id || 0}">
-      <div class="editor-grid">
+      <div class="editor-stack">
         <section class="panel">
           <h2>基本信息</h2>
           <div class="grid-2">
@@ -426,28 +426,26 @@ function paintEditor() {
           ${condGroup("Body", "JSON 用点路径，例如 user.name 或 items.0.id。原始正文用 $raw。", "body", rule.body_match)}
           ${condGroup("场景状态", "先在「场景状态」或命中规则时写入，再在这里读取。", "state", rule.state_match)}
         </section>
-        <div>
-          <section class="panel">
-            <h2>响应</h2>
-            <div class="grid-2">
-              <div class="field"><label>状态码</label><input name="status_code" type="number" value="${esc(rule.status_code)}"></div>
-              <div class="field"><label>延迟（毫秒）</label><input name="delay_ms" type="number" min="0" max="300000" value="${esc(rule.delay_ms)}"></div>
-            </div>
-            <div class="match-head"><strong>响应 Header</strong><button type="button" class="btn tiny" data-add-kv="headers">添加</button></div>
-            <div data-list="headers">${Object.entries(rule.response_headers || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
-            <div class="field" style="margin-top:12px"><label>响应 Body</label>
-              <textarea name="response_body" rows="12">${esc(rule.response_body || "")}</textarea>
-            </div>
-            <p class="hint">模板：<code>{{params.id}}</code> <code>{{query.id}}</code> <code>{{header.X-Token}}</code> <code>{{body.user.name}}</code> <code>{{state.user}}</code> <code>{{method}}</code> <code>{{path}}</code> <code>{{rawquery}}</code> <code>{{uuid}}</code> <code>{{now}}</code></p>
-          </section>
           <section class="panel">
             <h2>转发</h2>
-            <label class="radio"><input type="radio" name="mode" value="mock" ${rule.mode !== "proxy" ? "checked" : ""}> 直接返回上面的响应</label>
+            <label class="radio"><input type="radio" name="mode" value="mock" ${rule.mode !== "proxy" ? "checked" : ""}> 自定义响应内容</label>
             <label class="radio"><input type="radio" name="mode" value="proxy" ${rule.mode === "proxy" ? "checked" : ""}> 转发到真实服务</label>
+            <div class="response-fields ${rule.mode === "proxy" ? "hidden" : ""}">
+              <div class="grid-2">
+                <div class="field"><label>状态码</label><input name="status_code" type="number" value="${esc(rule.status_code)}"></div>
+                <div class="field"><label>延迟（毫秒）</label><input name="delay_ms" type="number" min="0" max="300000" value="${esc(rule.delay_ms)}"></div>
+              </div>
+              <div class="match-head"><strong>响应 Header</strong><button type="button" class="btn tiny" data-add-kv="headers">添加</button></div>
+              <div data-list="headers">${Object.entries(rule.response_headers || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
+              <div class="field" style="margin-top:12px"><label>响应 Body</label>
+                <textarea name="response_body" rows="12">${esc(rule.response_body || "")}</textarea>
+              </div>
+              <p class="hint">模板：<code>{{params.id}}</code> <code>{{query.id}}</code> <code>{{header.X-Token}}</code> <code>{{body.user.name}}</code> <code>{{state.user}}</code> <code>{{method}}</code> <code>{{path}}</code> <code>{{rawquery}}</code> <code>{{uuid}}</code> <code>{{now}}</code></p>
+            </div>
             <div class="proxy-fields ${rule.mode === "proxy" ? "" : "hidden"}">
-              <div class="field" style="margin-top:12px"><label>代理地址</label><input name="proxy_url" value="${esc(rule.proxy_url || "")}" placeholder="https://api.example.com"></div>
+              <div class="field"><label>代理地址</label><input name="proxy_url" value="${esc(rule.proxy_url || "")}" placeholder="https://api.example.com"></div>
               <label class="check"><input type="checkbox" name="record" ${rule.record ? "checked" : ""}> 把上游响应录制进这条规则</label>
-              <p class="hint">录制后仍会继续转发。要改成固定 Mock，把模式改回「直接返回」，或在请求日志里点「采用为 Mock 规则」。</p>
+              <p class="hint">录制后仍会继续转发。要改成固定 Mock，把模式改回「自定义响应内容」，或在请求日志里点「采用为 Mock 规则」。</p>
             </div>
           </section>
           <section class="panel">
@@ -455,7 +453,6 @@ function paintEditor() {
             <div class="match-head"><span class="hint">值里可以使用和响应相同的模板。</span><button type="button" class="btn tiny" data-add-kv="stateset">添加</button></div>
             <div data-list="stateset">${Object.entries(rule.state_set || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
           </section>
-        </div>
       </div>
       <div class="form-actions">
         <button class="btn primary" type="submit">保存规则</button>
@@ -532,7 +529,9 @@ function onEditorChange(e) {
     input.disabled = hide;
   }
   if (e.target.name === "mode") {
-    e.currentTarget.querySelector(".proxy-fields").classList.toggle("hidden", e.target.value !== "proxy");
+    const proxy = e.target.value === "proxy";
+    e.currentTarget.querySelector(".proxy-fields").classList.toggle("hidden", !proxy);
+    e.currentTarget.querySelector(".response-fields").classList.toggle("hidden", proxy);
   }
 }
 
@@ -935,6 +934,7 @@ function renderLiveList() {
   if (!box) return;
   const count = $("#live-count");
   if (count) count.textContent = state.liveItems.length + " 条";
+  const openKeys = new Set([...box.querySelectorAll("details[open]")].map((el) => el.dataset.key));
   if (!state.liveItems.length) {
     const hint = state.liveRunning
       ? "正在等待请求。"
@@ -943,6 +943,9 @@ function renderLiveList() {
     return;
   }
   box.innerHTML = state.liveItems.map(liveCard).join("");
+  box.querySelectorAll("details").forEach((el) => {
+    if (openKeys.has(el.dataset.key)) el.open = true;
+  });
 }
 
 function liveCard(item) {
@@ -957,25 +960,54 @@ function liveCard(item) {
       <span class="muted">${esc(when)}</span>
     </header>
     <div class="live-split">
-      <section>
-        <h3>输入</h3>
-        <pre>${esc(formatExchange(item.headers, item.body))}</pre>
-      </section>
-      <section>
-        <h3>输出</h3>
-        <pre>${esc(formatExchange(item.response_headers, item.response_body))}</pre>
-        ${item.error ? `<p class="hint">${esc(item.error)}</p>` : ""}
-      </section>
+      ${livePane(item.id, "in", "输入", item.headers, item.body)}
+      ${livePane(item.id, "out", "输出", item.response_headers, item.response_body, item.error)}
     </div>
   </article>`;
 }
 
-function formatExchange(headers, body) {
-  const parts = [];
-  const head = prettyText(headers);
-  if (head && head !== "{}" && head !== "(空)") parts.push("Headers\n" + head);
-  parts.push("Body\n" + prettyText(body));
-  return parts.join("\n\n");
+function livePane(id, side, title, headers, body, error) {
+  return `<section class="live-pane">
+    <h3>${title}</h3>
+    ${liveHeaders(id, side, headers)}
+    <div class="live-body">
+      <h4>Body</h4>
+      <pre>${esc(prettyText(body))}</pre>
+    </div>
+    ${error ? `<p class="hint">${esc(error)}</p>` : ""}
+  </section>`;
+}
+
+function liveHeaders(id, side, headers) {
+  const full = prettyText(headers);
+  const empty = !headers || full === "(空)" || full === "{}";
+  const preview = empty ? "(空)" : headerPreview(headers);
+  if (empty) {
+    return `<div class="live-headers live-headers-empty"><span class="label">Headers</span><span class="preview">${esc(preview)}</span></div>`;
+  }
+  return `<details class="live-headers" data-key="${esc(String(id))}-${side}">
+    <summary>
+      <span class="label">Headers</span>
+      <span class="preview">${esc(preview)}</span>
+    </summary>
+    <pre>${esc(full)}</pre>
+  </details>`;
+}
+
+function headerPreview(text) {
+  let obj;
+  try { obj = JSON.parse(text); } catch { obj = null; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    const line = prettyText(text).split("\n")[0] || "(空)";
+    return line.length > 96 ? line.slice(0, 96) + "…" : line;
+  }
+  const keys = Object.keys(obj);
+  if (!keys.length) return "(空)";
+  const value = obj[keys[0]];
+  const shown = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+  const more = keys.length > 1 ? ` · 另 ${keys.length - 1} 项` : "";
+  const line = keys[0] + ": " + shown + more;
+  return line.length > 96 ? line.slice(0, 96) + "…" : line;
 }
 
 function prettyText(text) {
