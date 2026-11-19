@@ -1,0 +1,7 @@
+/data/
+/.verify-data/
+*.db
+*.db-wal
+*.db-shm
+/csmock
+/csmock.exe

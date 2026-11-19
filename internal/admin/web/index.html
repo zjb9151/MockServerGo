@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSMock 控制台</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">M</span>
+        <div>
+          <strong>CSMock</strong>
+          <small>本地 HTTP Mock</small>
+        </div>
+      </div>
+      <nav>
+        <button type="button" data-nav="overview">概览</button>
+        <button type="button" data-nav="interfaces">接口</button>
+        <button type="button" data-nav="live">实时监控</button>
+        <button type="button" data-nav="logs">请求日志</button>
+        <button type="button" data-nav="state">场景状态</button>
+        <button type="button" data-nav="settings">配置与导入</button>
+      </nav>
+      <div class="side-foot" id="side-foot">正在连接…</div>
+    </aside>
+    <div class="main">
+      <header class="top">
+        <div>
+          <h1 id="title">概览</h1>
+          <p id="subtitle"></p>
+        </div>
+        <div class="top-actions" id="top-actions"></div>
+      </header>
+      <section id="view" class="view"></section>
+    </div>
+  </div>
+  <div id="toasts"></div>
+  <datalist id="methods">
+    <option value="*"></option>
+    <option value="GET"></option>
+    <option value="POST"></option>
+    <option value="PUT"></option>
+    <option value="PATCH"></option>
+    <option value="DELETE"></option>
+    <option value="HEAD"></option>
+    <option value="OPTIONS"></option>
+    <option value="GET,POST"></option>
+  </datalist>
+  <script src="/app.js"></script>
+</body>
+</html>

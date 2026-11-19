@@ -1,0 +1,54 @@
+# 按名称更新已有规则；改成 true 会先清空再导入
+replace: false
+rules:
+  - name: 按 Query 区分的搜索
+    enabled: true
+    priority: 10
+    method: GET
+    path: /search
+    query_match:
+      - key: q
+        op: eq
+        value: go
+    header_match: []
+    body_match: []
+    state_match: []
+    status_code: 200
+    delay_ms: 0
+    mode: mock
+    proxy_url: ""
+    record: false
+    response_headers:
+      Content-Type: application/json; charset=utf-8
+    response_body: |
+      {"keyword":"{{query.q}}","from":"yaml"}
+    state_set: {}
+    description: 仅当 q=go 时命中
+
+  - name: 创建订单
+    enabled: true
+    priority: 0
+    method: POST
+    path: /order/{id}
+    query_match: []
+    header_match:
+      - key: X-Token
+        op: exists
+        value: ""
+    body_match:
+      - key: amount
+        op: gt
+        value: 0
+    state_match: []
+    status_code: 201
+    delay_ms: 20
+    mode: mock
+    proxy_url: ""
+    record: false
+    response_headers:
+      Content-Type: application/json
+    response_body: |
+      {"id":"{{params.id}}","amount":"{{body.amount}}","token":"{{header.X-Token}}"}
+    state_set:
+      last_order: "{{params.id}}"
+    description: 路径参数、Header 和 JSON Body 同时参与匹配
