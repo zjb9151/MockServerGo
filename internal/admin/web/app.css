@@ -152,7 +152,8 @@ tbody tr:hover td { background: #fbfaf6; }
 .check { display: flex; align-items: center; gap: 8px; min-height: 38px; }
 .check input { width: auto; flex: none; }
 .editor-stack { display: flex; flex-direction: column; gap: 14px; }
-.editor-stack > .panel { margin-top: 0; }
+.editor-stack > .panel,
+.rule-settings > .panel { margin-top: 0; }
 .match-block { margin-top: 14px; }
 .match-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .cond, .kv { display: grid; grid-template-columns: 1.1fr 0.9fr 1.3fr auto; gap: 8px; margin-top: 8px; }

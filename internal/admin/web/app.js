@@ -419,13 +419,18 @@ function paintEditor() {
             <div class="field"><label>名称</label><input name="name" value="${esc(rule.name)}" placeholder="例如 登录成功"></div>
             <div class="field"><label>优先级</label><input name="priority" type="number" value="${esc(rule.priority)}" title="数字越大越优先"></div>
             <div class="field span-2"><label>说明</label><input name="description" value="${esc(rule.description || "")}"></div>
-            <div class="field"><label class="check"><input type="checkbox" name="enabled" ${rule.enabled ? "checked" : ""}> 启用</label></div>
           </div>
-          ${condGroup("Query 参数", "例如 key=id，操作=等于，值=1001。多个条件同时满足才命中。", "query", rule.query_match)}
-          ${condGroup("Header", "Header 名不区分大小写。", "header", rule.header_match)}
-          ${condGroup("Body", "JSON 用点路径，例如 user.name 或 items.0.id。原始正文用 $raw。", "body", rule.body_match)}
-          ${condGroup("场景状态", "先在「场景状态」或命中规则时写入，再在这里读取。", "state", rule.state_match)}
+          <label class="check"><input type="checkbox" name="enabled" ${rule.enabled ? "checked" : ""}> 启用</label>
+          <p class="hint">勾选后这条规则才会参与匹配，并使用下面的设置。取消勾选后不参与匹配。</p>
         </section>
+        <div class="rule-settings editor-stack ${rule.enabled ? "" : "hidden"}">
+          <section class="panel">
+            <h2>匹配条件</h2>
+            ${condGroup("Query 参数", "例如 key=id，操作=等于，值=1001。多个条件同时满足才命中。", "query", rule.query_match)}
+            ${condGroup("Header", "Header 名不区分大小写。", "header", rule.header_match)}
+            ${condGroup("Body", "JSON 用点路径，例如 user.name 或 items.0.id。原始正文用 $raw。", "body", rule.body_match)}
+            ${condGroup("场景状态", "先在「场景状态」或命中规则时写入，再在这里读取。", "state", rule.state_match)}
+          </section>
           <section class="panel">
             <h2>转发</h2>
             <label class="radio"><input type="radio" name="mode" value="mock" ${rule.mode !== "proxy" ? "checked" : ""}> 自定义响应内容</label>
@@ -453,6 +458,7 @@ function paintEditor() {
             <div class="match-head"><span class="hint">值里可以使用和响应相同的模板。</span><button type="button" class="btn tiny" data-add-kv="stateset">添加</button></div>
             <div data-list="stateset">${Object.entries(rule.state_set || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
           </section>
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn primary" type="submit">保存规则</button>
@@ -532,6 +538,9 @@ function onEditorChange(e) {
     const proxy = e.target.value === "proxy";
     e.currentTarget.querySelector(".proxy-fields").classList.toggle("hidden", !proxy);
     e.currentTarget.querySelector(".response-fields").classList.toggle("hidden", proxy);
+  }
+  if (e.target.name === "enabled") {
+    e.currentTarget.querySelector(".rule-settings").classList.toggle("hidden", !e.target.checked);
   }
 }
 
