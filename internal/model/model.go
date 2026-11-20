@@ -12,7 +12,9 @@ import (
 const Version = "1.0.0"
 
 // Condition 是一条匹配条件。Key 为参数名、Header 名或 JSON 路径。
+// Join 只用于 Query 的第二条及之后，表示和上一条是 and 还是 or。空值按 and。
 type Condition struct {
+	Join  string `json:"join,omitempty"`
 	Key   string `json:"key"`
 	Op    string `json:"op"`
 	Value string `json:"value"`
@@ -20,6 +22,7 @@ type Condition struct {
 
 func (c *Condition) UnmarshalJSON(b []byte) error {
 	var aux struct {
+		Join  string     `json:"join"`
 		Key   string     `json:"key"`
 		Op    string     `json:"op"`
 		Value FlexString `json:"value"`
@@ -27,6 +30,7 @@ func (c *Condition) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
+	c.Join = aux.Join
 	c.Key = aux.Key
 	c.Op = aux.Op
 	c.Value = string(aux.Value)
@@ -84,6 +88,7 @@ type Rule struct {
 	CreatedAt       string      `json:"created_at"`
 	UpdatedAt       string      `json:"updated_at"`
 	InterfaceID     int64       `json:"interface_id"`
+	Flow            *Flow       `json:"flow,omitempty"`
 }
 
 // Interface 是一个可被调用的接口，下面可以挂多条规则。
@@ -270,7 +275,7 @@ func (r *Rule) Normalize() error {
 	}
 	r.StateSet = cleanState
 	r.Description = strings.TrimSpace(r.Description)
-	return nil
+	return r.normalizeFlow()
 }
 
 func joinMethod(method string) string {
@@ -289,6 +294,15 @@ func normalizeConds(label string, conds []Condition) error {
 		if conds[i].Op == "" {
 			conds[i].Op = "eq"
 		}
+		join := strings.ToLower(strings.TrimSpace(conds[i].Join))
+		if label != "Query" || i == 0 {
+			join = ""
+		} else if join == "" || join == "and" || join == "&&" {
+			join = "and"
+		} else if join != "or" {
+			return fmt.Errorf("%s 匹配条件的关系只能是 and 或 or", label)
+		}
+		conds[i].Join = join
 		if conds[i].Key == "" {
 			return fmt.Errorf("%s 匹配条件缺少字段名", label)
 		}

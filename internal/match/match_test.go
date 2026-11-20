@@ -54,6 +54,44 @@ func TestFindRanksSpecificRuleHigher(t *testing.T) {
 	}
 }
 
+func TestQueryAndOr(t *testing.T) {
+	rule := model.Rule{
+		ID: 1, Enabled: true, Method: "GET", Path: "/search", StatusCode: 200,
+		QueryMatch: []model.Condition{
+			{Key: "a", Op: "eq", Value: "1"},
+			{Key: "b", Op: "eq", Value: "2", Join: "and"},
+			{Key: "c", Op: "eq", Value: "3", Join: "or"},
+		},
+	}
+	match := func(values url.Values) bool {
+		_, ok := Find([]model.Rule{rule}, Request{Method: "GET", Path: "/search", Query: values})
+		return ok
+	}
+	if !match(url.Values{"a": {"1"}, "b": {"2"}}) {
+		t.Fatal("a and b should match")
+	}
+	if !match(url.Values{"c": {"3"}}) {
+		t.Fatal("c alone should match through or")
+	}
+	if match(url.Values{"a": {"1"}}) {
+		t.Fatal("a without b should not match")
+	}
+	if match(url.Values{"b": {"2"}}) {
+		t.Fatal("b without a should not match")
+	}
+	bothAnd := model.Rule{
+		ID: 2, Enabled: true, Method: "GET", Path: "/search", StatusCode: 200,
+		QueryMatch: []model.Condition{
+			{Key: "a", Op: "eq", Value: "1"},
+			{Key: "b", Op: "eq", Value: "2"},
+		},
+	}
+	_, ok := Find([]model.Rule{bothAnd}, Request{Method: "GET", Path: "/search", Query: url.Values{"a": {"1"}}})
+	if ok {
+		t.Fatal("missing join should stay and")
+	}
+}
+
 func TestBodyHeaderAndState(t *testing.T) {
 	rules := []model.Rule{{
 		ID: 1, Enabled: true, Method: "POST", Path: "/login", StatusCode: 200,

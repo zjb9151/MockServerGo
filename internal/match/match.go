@@ -53,16 +53,23 @@ func Collect(rules []model.Rule, req Request) []Hit {
 		if !ok {
 			continue
 		}
-		if !matchConds(rule.QueryMatch, req.Query) {
-			continue
-		}
-		if !matchHeader(rule.HeaderMatch, req.Header) {
-			continue
-		}
-		if !matchBody(rule.BodyMatch, req.Body) {
-			continue
-		}
-		if !matchState(rule.StateMatch, req.State) {
+		conds := len(rule.QueryMatch) + len(rule.HeaderMatch) + len(rule.BodyMatch) + len(rule.StateMatch)
+		if rule.Flow != nil && len(rule.Flow.Nodes) > 0 {
+			next, used, ok := applyFlow(rule, req)
+			if !used || !ok {
+				continue
+			}
+			rule = next
+			conds = 0
+			for _, node := range rule.Flow.Nodes {
+				if node.Type == "judge" {
+					conds++
+				}
+			}
+		} else if !matchConds(rule.QueryMatch, req.Query) ||
+			!matchHeader(rule.HeaderMatch, req.Header) ||
+			!matchBody(rule.BodyMatch, req.Body) ||
+			!matchState(rule.StateMatch, req.State) {
 			continue
 		}
 		if params == nil {
@@ -79,7 +86,7 @@ func Collect(rules []model.Rule, req Request) []Hit {
 				priority: rule.Priority,
 				explicit: ex,
 				staticN:  staticCount(rule.Path),
-				conds:    len(rule.QueryMatch) + len(rule.HeaderMatch) + len(rule.BodyMatch) + len(rule.StateMatch),
+				conds:    conds,
 				id:       rule.ID,
 			},
 		})
@@ -198,12 +205,22 @@ func staticCount(pattern string) int {
 }
 
 func matchConds(conds []model.Condition, q url.Values) bool {
-	for _, c := range conds {
+	if len(conds) == 0 {
+		return true
+	}
+	// 并且比或者更紧：(a AND b) OR c。
+	anyGroup := false
+	group := true
+	for i, c := range conds {
+		if i > 0 && strings.EqualFold(strings.TrimSpace(c.Join), "or") {
+			anyGroup = anyGroup || group
+			group = true
+		}
 		if !matchValues(c, q[c.Key]) {
-			return false
+			group = false
 		}
 	}
-	return true
+	return anyGroup || group
 }
 
 func matchHeader(conds []model.Condition, h http.Header) bool {

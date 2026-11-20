@@ -171,7 +171,7 @@ async function render() {
       sub = "接口只确定方法和路径，匹配条件与响应写在规则里";
     } else if (state.editing) {
       title = state.editing.id ? "编辑规则" : "新建规则";
-      sub = state.iface ? state.iface.method + " " + state.iface.path : "";
+      sub = "从左侧把节点拖到画布，连线后在右侧设置条件和返回内容";
     } else if (state.iface) {
       title = state.iface.name || "接口规则";
       sub = state.iface.method + " " + state.iface.path + " · 用规则区分不同响应";
@@ -386,13 +386,14 @@ function renderRuleRows() {
 }
 
 function ruleRow(rule) {
+  const flow = rule.flow && Array.isArray(rule.flow.nodes) && rule.flow.nodes.some((node) => node.type !== "start");
   const conds = rule.query_match.length + rule.header_match.length + rule.body_match.length + rule.state_match.length;
   return `<tr class="${rule.enabled ? "" : "off"}">
     <td><button type="button" class="switch ${rule.enabled ? "on" : ""}" data-toggle="${rule.id}" aria-label="切换启用"></button></td>
     <td>${rule.priority}</td>
     <td>${esc(rule.name)}</td>
-    <td>${conds ? conds + " 个条件" : "全部请求"}</td>
-    <td>${rule.status_code}</td>
+    <td>${flow ? "流程图" : (conds ? conds + " 个条件" : "全部请求")}</td>
+    <td>${flow ? "按分支" : rule.status_code}</td>
     <td>${rule.delay_ms ? rule.delay_ms + " ms" : "-"}</td>
     <td>${rule.mode === "proxy" ? "代理" : "Mock"}</td>
     <td class="row-actions">
@@ -425,38 +426,9 @@ function paintEditor() {
         </section>
         <div class="rule-settings editor-stack ${rule.enabled ? "" : "hidden"}">
           <section class="panel">
-            <h2>匹配条件</h2>
-            ${condGroup("Query 参数", "例如 key=id，操作=等于，值=1001。多个条件同时满足才命中。", "query", rule.query_match)}
-            ${condGroup("Header", "Header 名不区分大小写。", "header", rule.header_match)}
-            ${condGroup("Body", "JSON 用点路径，例如 user.name 或 items.0.id。原始正文用 $raw。", "body", rule.body_match)}
-            ${condGroup("场景状态", "先在「场景状态」或命中规则时写入，再在这里读取。", "state", rule.state_match)}
-          </section>
-          <section class="panel">
-            <h2>转发</h2>
-            <label class="radio"><input type="radio" name="mode" value="mock" ${rule.mode !== "proxy" ? "checked" : ""}> 自定义响应内容</label>
-            <label class="radio"><input type="radio" name="mode" value="proxy" ${rule.mode === "proxy" ? "checked" : ""}> 转发到真实服务</label>
-            <div class="response-fields ${rule.mode === "proxy" ? "hidden" : ""}">
-              <div class="grid-2">
-                <div class="field"><label>状态码</label><input name="status_code" type="number" value="${esc(rule.status_code)}"></div>
-                <div class="field"><label>延迟（毫秒）</label><input name="delay_ms" type="number" min="0" max="300000" value="${esc(rule.delay_ms)}"></div>
-              </div>
-              <div class="match-head"><strong>响应 Header</strong><button type="button" class="btn tiny" data-add-kv="headers">添加</button></div>
-              <div data-list="headers">${Object.entries(rule.response_headers || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
-              <div class="field" style="margin-top:12px"><label>响应 Body</label>
-                <textarea name="response_body" rows="12">${esc(rule.response_body || "")}</textarea>
-              </div>
-              <p class="hint">模板：<code>{{params.id}}</code> <code>{{query.id}}</code> <code>{{header.X-Token}}</code> <code>{{body.user.name}}</code> <code>{{state.user}}</code> <code>{{method}}</code> <code>{{path}}</code> <code>{{rawquery}}</code> <code>{{uuid}}</code> <code>{{now}}</code></p>
-            </div>
-            <div class="proxy-fields ${rule.mode === "proxy" ? "" : "hidden"}">
-              <div class="field"><label>代理地址</label><input name="proxy_url" value="${esc(rule.proxy_url || "")}" placeholder="https://api.example.com"></div>
-              <label class="check"><input type="checkbox" name="record" ${rule.record ? "checked" : ""}> 把上游响应录制进这条规则</label>
-              <p class="hint">录制后仍会继续转发。要改成固定 Mock，把模式改回「自定义响应内容」，或在请求日志里点「采用为 Mock 规则」。</p>
-            </div>
-          </section>
-          <section class="panel">
-            <h2>命中后写入状态</h2>
-            <div class="match-head"><span class="hint">值里可以使用和响应相同的模板。</span><button type="button" class="btn tiny" data-add-kv="stateset">添加</button></div>
-            <div data-list="stateset">${Object.entries(rule.state_set || {}).map(([k, v]) => kvRow(k, v)).join("")}</div>
+            <h2>流程</h2>
+            <p class="hint">从左侧把判断、返回拖到画布。从一个圆点拖到下一个节点完成连线，选中节点后在右侧设置条件和响应。</p>
+            <div class="flow-wrap" id="flow-root"></div>
           </section>
         </div>
       </div>
@@ -477,30 +449,801 @@ function paintEditor() {
       <div id="try-result"></div>
     </section>`;
   const form = $("#rule-form");
+  rule.flow = ensureFlow(rule);
   form.addEventListener("click", onEditorClick);
   form.addEventListener("change", onEditorChange);
+  form.addEventListener("input", () => syncFlowFromDom(form));
   $("#try-run").onclick = () => runTry(form);
+  mountDesigner();
 }
 
-function condGroup(title, hint, name, items) {
-  const rows = (items || []).map((item) => condRow(item)).join("");
-  return `<div class="match-block">
-    <div class="match-head"><strong>${title}</strong><button type="button" class="btn tiny" data-add-cond="${name}">添加</button></div>
-    <p class="hint">${hint}</p>
-    <div data-list="${name}">${rows || '<p class="muted empty-cond">不限制</p>'}</div>
+function ensureFlow(rule) {
+  if (rule.flow && Array.isArray(rule.flow.nodes) && rule.flow.nodes.some((node) => node.type === "start")) {
+    return rule.flow;
+  }
+  return synthesizeFlow(rule);
+}
+
+function cloneFlow(flow) {
+  return JSON.parse(JSON.stringify(flow));
+}
+
+function nextFlowId(flow) {
+  if (!flow._scanned) {
+    flow._seq = 0;
+    const take = (id) => {
+      const matched = /^n(\d+)$/.exec(id || "");
+      if (matched) flow._seq = Math.max(flow._seq, Number(matched[1]));
+    };
+    (flow.fields || []).forEach((field) => take(field.id));
+    (flow.nodes || []).forEach((node) => {
+      take(node.id);
+      (node.branches || []).forEach((branch) => take(branch.id));
+    });
+    flow._scanned = true;
+  }
+  flow._seq += 1;
+  return "n" + flow._seq;
+}
+
+function synthesizeFlow(rule) {
+  const flow = { fields: [], nodes: [] };
+  const fieldId = (source, key) => {
+    let found = flow.fields.find((field) => field.source === source && field.key === key);
+    if (!found) {
+      found = { id: nextFlowId(flow), source, key };
+      flow.fields.push(found);
+    }
+    return found.id;
+  };
+  const ret = {
+    id: nextFlowId(flow),
+    type: "return",
+    status_code: rule.status_code || 200,
+    delay_ms: rule.delay_ms || 0,
+    response_headers: { ...(rule.response_headers || {}) },
+    response_body: rule.response_body || "",
+    mode: rule.mode || "mock",
+    proxy_url: rule.proxy_url || "",
+    record: !!rule.record,
+    state_set: { ...(rule.state_set || {}) },
+  };
+  flow.nodes.push(ret);
+  const makeJudge = (source, cond, yes, no) => {
+    const node = {
+      id: nextFlowId(flow),
+      type: "judge",
+      field_id: fieldId(source, cond.key),
+      branches: [
+        { id: nextFlowId(flow), kind: "when", op: cond.op || "eq", value: cond.value || "", to: yes },
+        { id: nextFlowId(flow), kind: "else", to: no || "" },
+      ],
+    };
+    flow.nodes.push(node);
+    return node.id;
+  };
+  const andChain = (source, conds, thenId) => {
+    let next = thenId;
+    for (let i = conds.length - 1; i >= 0; i--) next = makeJudge(source, conds[i], next, "");
+    return next;
+  };
+  const queryChain = (conds, thenId) => {
+    if (!conds.length) return thenId;
+    const groups = [];
+    let current = [];
+    conds.forEach((cond, index) => {
+      if (index > 0 && cond.join === "or") {
+        groups.push(current);
+        current = [];
+      }
+      current.push(cond);
+    });
+    groups.push(current);
+    let fail = "";
+    for (let g = groups.length - 1; g >= 0; g--) {
+      let yes = thenId;
+      for (let i = groups[g].length - 1; i >= 0; i--) yes = makeJudge("query", groups[g][i], yes, fail);
+      fail = yes;
+    }
+    return fail;
+  };
+  let tail = ret.id;
+  tail = andChain("state", rule.state_match || [], tail);
+  tail = andChain("body", rule.body_match || [], tail);
+  tail = queryChain(rule.query_match || [], tail);
+  tail = andChain("header", rule.header_match || [], tail);
+  flow.nodes.unshift({ id: "start", type: "start", next: tail });
+  return flow;
+}
+
+const FLOW_SOURCES = [
+  ["header", "Header"],
+  ["query", "Query"],
+  ["body", "Body"],
+  ["state", "场景状态"],
+];
+
+function sourceLabel(source) {
+  const found = FLOW_SOURCES.find((item) => item[0] === source);
+  return found ? found[1] : source;
+}
+
+function opLabel(op) {
+  const found = OPS.find((item) => item[0] === op);
+  return found ? found[1] : op;
+}
+
+const flowView = { scale: 1, panX: 28, panY: 36, tool: "select", selected: null, selectedEdge: null, drag: null };
+
+function rerenderFlow() {
+  if (!$("#stage-world")) {
+    mountDesigner();
+    return;
+  }
+  assignPositions(state.editing.flow);
+  paintCanvas();
+  paintInspector();
+}
+
+function mountDesigner() {
+  const root = $("#flow-root");
+  if (!root || !state.editing) return;
+  flowView.scale = 1;
+  flowView.panX = 28;
+  flowView.panY = 36;
+  flowView.tool = "select";
+  flowView.selected = "start";
+  flowView.selectedEdge = null;
+  flowView.drag = null;
+  assignPositions(state.editing.flow);
+  root.innerHTML = `
+    <div class="designer">
+      <aside class="palette">
+        <button type="button" class="tool ${flowView.tool === "select" ? "on" : ""}" data-tool="select" title="选择">选择</button>
+        <button type="button" class="tool" data-tool="hand" title="拖动画布">拖动</button>
+        <button type="button" class="palette-item" draggable="true" data-palette="judge" title="判断"><i class="shape diamond"></i><span>判断</span></button>
+        <button type="button" class="palette-item" draggable="true" data-palette="return" title="返回"><i class="shape end"></i><span>返回</span></button>
+      </aside>
+      <div class="stage">
+        <div class="stage-bar">
+          <button type="button" class="btn tiny" data-zoom="in">放大</button>
+          <button type="button" class="btn tiny" data-zoom="out">缩小</button>
+          <button type="button" class="btn tiny" data-zoom="fit">适应</button>
+          <button type="button" class="btn tiny danger" data-zoom="delete">删除</button>
+        </div>
+        <div class="stage-view" id="stage-view">
+          <div class="stage-world" id="stage-world">
+            <svg id="stage-edges"></svg>
+            <div id="stage-nodes"></div>
+          </div>
+        </div>
+      </div>
+      <aside class="inspector" id="flow-inspector"></aside>
+    </div>`;
+  const view = $("#stage-view");
+  view.addEventListener("dragover", (e) => e.preventDefault());
+  view.addEventListener("drop", onPaletteDrop);
+  view.addEventListener("mousedown", onStageDown);
+  view.addEventListener("wheel", onStageWheel, { passive: false });
+  root.querySelectorAll("[data-palette]").forEach((item) => {
+    item.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", item.dataset.palette);
+      e.dataTransfer.effectAllowed = "copy";
+    });
+  });
+  root.querySelectorAll("[data-tool]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      flowView.tool = btn.dataset.tool;
+      root.querySelectorAll("[data-tool]").forEach((el) => el.classList.toggle("on", el.dataset.tool === flowView.tool));
+      view.classList.toggle("hand", flowView.tool === "hand");
+    });
+  });
+  root.querySelectorAll("[data-zoom]").forEach((btn) => {
+    btn.addEventListener("click", () => onZoom(btn.dataset.zoom));
+  });
+  document.removeEventListener("keydown", onDesignerKey);
+  document.addEventListener("keydown", onDesignerKey);
+  paintCanvas();
+  paintInspector();
+}
+
+function assignPositions(flow) {
+  if (!flow) return;
+  const byId = Object.fromEntries((flow.nodes || []).map((node) => [node.id, node]));
+  const start = (flow.nodes || []).find((node) => node.type === "start");
+  const level = new Map();
+  const queue = [];
+  if (start) {
+    level.set(start.id, 0);
+    queue.push(start.id);
+  }
+  while (queue.length) {
+    const id = queue.shift();
+    const node = byId[id];
+    const nexts = node.type === "start" ? [node.next] : (node.branches || []).map((branch) => branch.to);
+    nexts.filter(Boolean).forEach((nid) => {
+      if (!level.has(nid) && byId[nid]) {
+        level.set(nid, level.get(id) + 1);
+        queue.push(nid);
+      }
+    });
+  }
+  const rows = {};
+  (flow.nodes || []).forEach((node) => {
+    const col = level.has(node.id) ? level.get(node.id) : 0;
+    rows[col] = rows[col] || 0;
+    if (!node.placed) {
+      node.x = 72 + col * 230;
+      node.y = 64 + rows[col] * 150;
+      node.placed = true;
+    }
+    rows[col] += 1;
+  });
+}
+
+function nodeSize(node) {
+  if (node.type === "judge") {
+    const count = Math.max(1, (node.branches || []).length);
+    return { w: 150, h: Math.max(112, 36 + count * 28) };
+  }
+  return { w: 84, h: 104 };
+}
+
+function applyView() {
+  const world = $("#stage-world");
+  if (!world) return;
+  world.style.transform = `translate(${flowView.panX}px, ${flowView.panY}px) scale(${flowView.scale})`;
+}
+
+function worldPoint(event) {
+  const rect = $("#stage-view").getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left - flowView.panX) / flowView.scale,
+    y: (event.clientY - rect.top - flowView.panY) / flowView.scale,
+  };
+}
+
+function paintCanvas() {
+  const flow = state.editing && state.editing.flow;
+  const nodes = $("#stage-nodes");
+  const edges = $("#stage-edges");
+  if (!flow || !nodes || !edges) return;
+  nodes.innerHTML = (flow.nodes || []).map(canvasNode).join("");
+  edges.innerHTML = `<defs>
+    <marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z"></path></marker>
+    <marker id="flow-arrow-yes" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="arrow-yes" d="M0,0 L8,3 L0,6 Z"></path></marker>
+    <marker id="flow-arrow-no" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="arrow-no" d="M0,0 L8,3 L0,6 Z"></path></marker>
+  </defs>` + canvasEdges(flow);
+  applyView();
+}
+
+function canvasNode(node) {
+  const size = nodeSize(node);
+  const selected = flowView.selected === node.id ? " selected" : "";
+  const outs = outputPorts(node).map((port) => {
+    return `<i class="port out ${port.kind || ""}" data-port="${esc(port.id)}" data-from="${esc(node.id)}" style="top:${port.top}px" title="${esc(port.title)}"></i>`;
+  }).join("");
+  const input = node.type === "start" ? "" : `<i class="port in" data-inport="${esc(node.id)}" style="top:${inputTop(node)}px"></i>`;
+  let shape = `<div class="dshape circle"></div><span class="dlabel">开始</span>`;
+  if (node.type === "judge") shape = `<div class="dshape diamond"></div><span class="dlabel">${esc(judgeCaption(node))}</span>`;
+  if (node.type === "return") shape = `<div class="dshape end"></div><span class="dlabel">${esc(node.status_code || 200)}</span>`;
+  return `<div class="dnode ${node.type}${selected}" data-canvas-node="${esc(node.id)}" style="left:${node.x}px;top:${node.y}px;width:${size.w}px;height:${size.h}px">${input}${shape}${outs}</div>`;
+}
+
+function judgeCaption(node) {
+  const flow = state.editing.flow;
+  const field = (flow.fields || []).find((item) => item.id === node.field_id);
+  const when = (node.branches || []).find((branch) => branch.kind !== "else");
+  if (!field || !field.key) return "判断";
+  return field.key + " " + opLabel((when && when.op) || "eq");
+}
+
+function outputPorts(node) {
+  if (node.type === "start") return [{ id: "next", title: "出口", top: 36, kind: "" }];
+  if (node.type !== "judge") return [];
+  const branches = node.branches || [];
+  const whens = branches.filter((branch) => branch.kind !== "else").length;
+  const size = nodeSize(node);
+  return branches.map((branch, index) => ({
+    id: branch.id,
+    title: branchLabel(branch, whens),
+    kind: branch.kind === "else" ? "no" : "yes",
+    top: size.h * (index + 1) / (branches.length + 1),
+  }));
+}
+
+function inputTop(node) {
+  return node.type === "judge" ? nodeSize(node).h / 2 : 36;
+}
+
+function portPoint(node, kind, portId) {
+  const size = nodeSize(node);
+  if (kind === "in") return { x: node.x, y: node.y + inputTop(node) };
+  const port = outputPorts(node).find((item) => item.id === portId) || outputPorts(node)[0];
+  return { x: node.x + size.w, y: node.y + (port ? port.top : size.h / 2) };
+}
+
+function canvasEdges(flow) {
+  const byId = Object.fromEntries((flow.nodes || []).map((node) => [node.id, node]));
+  const parts = [];
+  (flow.nodes || []).forEach((node) => {
+    const links = node.type === "start" ? [["next", node.next]] : (node.branches || []).map((branch) => [branch.id, branch.to]);
+    links.forEach(([port, to]) => {
+      const target = byId[to];
+      if (!target) return;
+      const a = portPoint(node, "out", port);
+      const b = portPoint(target, "in");
+      b.x -= 10;
+      const dx = Math.max(48, Math.abs(b.x - a.x) / 2);
+      const d = `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+      const on = flowView.selectedEdge && flowView.selectedEdge.from === node.id && flowView.selectedEdge.port === port;
+      const kind = edgeKind(node, port);
+      const marker = kind ? `flow-arrow-${kind}` : "flow-arrow";
+      parts.push(`<path class="edge-hit" data-edge="${esc(node.id)}:${esc(port)}" d="${d}"></path>`);
+      parts.push(`<path class="edge ${kind}${on ? " selected" : ""}" d="${d}" marker-end="url(#${marker})"></path>`);
+      const label = edgeLabel(node, port);
+      if (label) {
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2 - 14;
+        const width = Math.max(44, label.length * 13 + 16);
+        parts.push(`<g class="edge-tag ${kind}"><rect x="${mx - width / 2}" y="${my - 10}" width="${width}" height="20" rx="10"></rect><text x="${mx}" y="${my + 4}" text-anchor="middle">${esc(label)}</text></g>`);
+      }
+    });
+  });
+  return parts.join("");
+}
+
+function edgeKind(node, port) {
+  if (node.type !== "judge") return "";
+  const branch = (node.branches || []).find((item) => item.id === port);
+  if (!branch) return "";
+  return branch.kind === "else" ? "no" : "yes";
+}
+
+function edgeLabel(node, port) {
+  if (node.type !== "judge") return "";
+  const branches = node.branches || [];
+  const branch = branches.find((item) => item.id === port);
+  if (!branch) return "";
+  const whens = branches.filter((item) => item.kind !== "else").length;
+  return branchLabel(branch, whens);
+}
+
+function paintInspector() {
+  const box = $("#flow-inspector");
+  const flow = state.editing && state.editing.flow;
+  if (!box || !flow) return;
+  if (flowView.selectedEdge) {
+    box.innerHTML = `<div class="inspector-card"><h3>连线</h3><p class="hint">删掉后这条出口就不再指向目标节点。</p><button type="button" class="btn tiny danger" id="delete-edge">删除连线</button></div>`;
+    $("#delete-edge").onclick = () => deleteSelectedEdge();
+    return;
+  }
+  const node = (flow.nodes || []).find((item) => item.id === flowView.selected);
+  if (!node) {
+    box.innerHTML = `<div class="inspector-card"><h3>属性</h3><p class="hint">选中一个节点，设置它的字段、条件或返回内容。从一个圆点拖到下一个节点即可连线。</p></div>`;
+    return;
+  }
+  if (node.type === "start") box.innerHTML = startInspector(flow);
+  else if (node.type === "judge") box.innerHTML = judgeInspector(flow, node);
+  else box.innerHTML = returnInspector(node);
+}
+
+function startInspector(flow) {
+  const fields = (flow.fields || []).map((field) => `<div class="flow-field" data-field-row="${esc(field.id)}">
+    <span>${sourceLabel(field.source)}</span>
+    <input data-k="key" value="${esc(field.key || "")}" placeholder="${field.source === "body" ? "例如 user.name" : "字段名"}">
+    <button type="button" class="btn tiny danger" data-flow-delete-field="${esc(field.id)}">删除</button>
+  </div>`).join("");
+  const adds = FLOW_SOURCES.map(([source, label]) => `<button type="button" class="btn tiny" data-add-field="${source}">${label}</button>`).join("");
+  return `<div class="inspector-card" data-node="start"><h3>开始</h3><p class="hint">取出后面判断要用的字段。开始节点只有一个。</p>${fields || '<p class="muted">还没有字段。</p>'}<div class="row-actions">${adds}</div></div>`;
+}
+
+function judgeInspector(flow, node) {
+  const options = (flow.fields || []).map((field) => `<option value="${esc(field.id)}"${field.id === node.field_id ? " selected" : ""}>${esc(field.key || "未命名")} · ${sourceLabel(field.source)}</option>`).join("");
+  const whens = (node.branches || []).filter((branch) => branch.kind !== "else");
+  const rows = (node.branches || []).map((branch) => {
+    if (branch.kind === "else") return `<div class="inspector-branch"><strong>${whens.length > 1 ? "其他" : "不满足"}</strong><span class="muted">${branch.to ? "已连线" : "未连线"}</span></div>`;
+    return `<div class="inspector-branch" data-branch="${esc(branch.id)}">
+      <select data-k="op">${OPS.map(([value, text]) => `<option value="${value}"${value === (branch.op || "eq") ? " selected" : ""}>${text}</option>`).join("")}</select>
+      <input data-k="value" value="${esc(branch.value || "")}" placeholder="期望值" ${(branch.op === "exists" || branch.op === "not_exists") ? "disabled" : ""}>
+      <span class="muted">${branch.to ? "已连线" : "未连线"}</span>
+      ${whens.length > 1 ? `<button type="button" class="btn tiny danger" data-flow-delete-branch="${esc(branch.id)}">删除</button>` : ""}
+    </div>`;
+  }).join("");
+  return `<div class="inspector-card" data-node="${esc(node.id)}"><h3>判断</h3>
+    <div class="field"><label>字段</label><select data-k="field">${options || '<option value="">请先在开始节点添加字段</option>'}</select></div>
+    ${rows}
+    <button type="button" class="btn tiny" data-add-branch="${esc(node.id)}">添加分支</button>
+    <button type="button" class="btn tiny danger" data-flow-delete-node="${esc(node.id)}">删除节点</button>
   </div>`;
 }
 
-function condRow(item) {
+function returnInspector(node) {
+  const headers = Object.entries(node.response_headers || {}).map(([key, value]) => kvRow(key, value)).join("");
+  const states = Object.entries(node.state_set || {}).map(([key, value]) => kvRow(key, value)).join("");
+  const proxy = node.mode === "proxy";
+  return `<div class="inspector-card" data-node="${esc(node.id)}"><h3>返回</h3>
+    <label class="radio"><input type="radio" name="mode-${esc(node.id)}" data-k="mode" value="mock" ${proxy ? "" : "checked"}> 自定义响应内容</label>
+    <label class="radio"><input type="radio" name="mode-${esc(node.id)}" data-k="mode" value="proxy" ${proxy ? "checked" : ""}> 转发到真实服务</label>
+    <div class="response-fields ${proxy ? "hidden" : ""}">
+      <div class="grid-2">
+        <div class="field"><label>状态码</label><input data-k="status" type="number" value="${esc(node.status_code || 200)}"></div>
+        <div class="field"><label>延迟（毫秒）</label><input data-k="delay" type="number" min="0" max="300000" value="${esc(node.delay_ms || 0)}"></div>
+      </div>
+      <div class="match-head"><strong>响应 Header</strong><button type="button" class="btn tiny" data-add-kv="headers-${esc(node.id)}">添加</button></div>
+      <div data-list="headers-${esc(node.id)}">${headers}</div>
+      <div class="field"><label>响应 Body</label><textarea data-k="body" rows="6">${esc(node.response_body || "")}</textarea></div>
+    </div>
+    <div class="proxy-fields ${proxy ? "" : "hidden"}">
+      <div class="field"><label>代理地址</label><input data-k="proxy" value="${esc(node.proxy_url || "")}" placeholder="https://api.example.com"></div>
+      <label class="check"><input type="checkbox" data-k="record" ${node.record ? "checked" : ""}> 录制上游响应</label>
+    </div>
+    <div class="match-head"><strong>命中后写入状态</strong><button type="button" class="btn tiny" data-add-kv="stateset-${esc(node.id)}">添加</button></div>
+    <div data-list="stateset-${esc(node.id)}">${states}</div>
+    <button type="button" class="btn tiny danger" data-flow-delete-node="${esc(node.id)}">删除节点</button>
+  </div>`;
+}
+
+function onPaletteDrop(event) {
+  event.preventDefault();
+  const kind = event.dataTransfer.getData("text/plain");
+  if (kind !== "judge" && kind !== "return") return;
+  const flow = state.editing.flow;
+  const point = worldPoint(event);
+  const node = kind === "judge" ? blankJudge(flow) : blankReturn(flow);
+  node.x = Math.max(0, point.x - 40);
+  node.y = Math.max(0, point.y - 30);
+  node.placed = true;
+  flow.nodes.push(node);
+  flowView.selected = node.id;
+  flowView.selectedEdge = null;
+  paintCanvas();
+  paintInspector();
+}
+
+function onStageDown(event) {
+  if (event.button !== 0) return;
+  const port = event.target.closest("[data-port]");
+  if (port) {
+    startWire(event, port);
+    return;
+  }
+  const nodeEl = event.target.closest("[data-canvas-node]");
+  if (nodeEl && flowView.tool !== "hand") {
+    startNodeDrag(event, nodeEl.dataset.canvasNode);
+    return;
+  }
+  const edge = event.target.closest("[data-edge]");
+  if (edge) {
+    const [from, portId] = edge.dataset.edge.split(":");
+    syncFlowFromDom($("#rule-form"));
+    flowView.selected = null;
+    flowView.selectedEdge = { from, port: portId };
+    paintCanvas();
+    paintInspector();
+    return;
+  }
+  if (flowView.tool === "hand") {
+    startPan(event);
+    return;
+  }
+  syncFlowFromDom($("#rule-form"));
+  flowView.selected = null;
+  flowView.selectedEdge = null;
+  paintCanvas();
+  paintInspector();
+}
+
+function startNodeDrag(event, id) {
+  event.preventDefault();
+  const flow = state.editing.flow;
+  const node = flow.nodes.find((item) => item.id === id);
+  const point = worldPoint(event);
+  const origin = { x: node.x, y: node.y, px: point.x, py: point.y, moved: false };
+  syncFlowFromDom($("#rule-form"));
+  flowView.selected = id;
+  flowView.selectedEdge = null;
+  const move = (ev) => {
+    const now = worldPoint(ev);
+    const dx = now.x - origin.px;
+    const dy = now.y - origin.py;
+    if (Math.abs(dx) + Math.abs(dy) > 2) origin.moved = true;
+    node.x = Math.max(0, origin.x + dx);
+    node.y = Math.max(0, origin.y + dy);
+    node.placed = true;
+    paintCanvas();
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    paintInspector();
+  };
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+function startPan(event) {
+  event.preventDefault();
+  const origin = { x: event.clientX, y: event.clientY, panX: flowView.panX, panY: flowView.panY };
+  const move = (ev) => {
+    flowView.panX = origin.panX + ev.clientX - origin.x;
+    flowView.panY = origin.panY + ev.clientY - origin.y;
+    applyView();
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+  };
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+function startWire(event, port) {
+  event.preventDefault();
+  event.stopPropagation();
+  const from = port.dataset.from;
+  const portId = port.dataset.port;
+  const flow = state.editing.flow;
+  const source = flow.nodes.find((node) => node.id === from);
+  const svg = $("#stage-edges");
+  const temp = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  temp.setAttribute("class", "edge temp");
+  svg.appendChild(temp);
+  const move = (ev) => {
+    const a = portPoint(source, "out", portId);
+    const b = worldPoint(ev);
+    const dx = Math.max(48, Math.abs(b.x - a.x) / 2);
+    temp.setAttribute("d", `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`);
+  };
+  const up = (ev) => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    temp.remove();
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const input = el && el.closest("[data-inport]");
+    if (input) connectNodes(from, portId, input.dataset.inport);
+    paintCanvas();
+  };
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+function connectNodes(fromId, portId, toId) {
+  const flow = state.editing.flow;
+  if (!toId || fromId === toId) return;
+  const target = flow.nodes.find((node) => node.id === toId);
+  if (!target || target.type === "start") return;
+  if (reaches(flow, toId, fromId)) {
+    toast("这样连会形成循环", "err");
+    return;
+  }
+  const source = flow.nodes.find((node) => node.id === fromId);
+  if (!source) return;
+  if (portId === "next") source.next = toId;
+  else {
+    const branch = (source.branches || []).find((item) => item.id === portId);
+    if (branch) branch.to = toId;
+  }
+  flowView.selected = fromId;
+  paintInspector();
+}
+
+function reaches(flow, fromId, targetId) {
+  const seen = new Set();
+  const walk = (id) => {
+    if (!id || seen.has(id)) return false;
+    if (id === targetId) return true;
+    seen.add(id);
+    const node = flow.nodes.find((item) => item.id === id);
+    if (!node) return false;
+    if (node.type === "start") return walk(node.next);
+    return (node.branches || []).some((branch) => walk(branch.to));
+  };
+  return walk(fromId);
+}
+
+function onStageWheel(event) {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  const prev = flowView.scale;
+  const next = Math.min(1.8, Math.max(0.45, prev * (event.deltaY < 0 ? 1.08 : 0.92)));
+  const rect = $("#stage-view").getBoundingClientRect();
+  const mx = event.clientX - rect.left;
+  const my = event.clientY - rect.top;
+  flowView.panX = mx - (mx - flowView.panX) * (next / prev);
+  flowView.panY = my - (my - flowView.panY) * (next / prev);
+  flowView.scale = next;
+  applyView();
+}
+
+function onZoom(action) {
+  if (action === "delete") {
+    deleteSelection();
+    return;
+  }
+  if (action === "fit") {
+    fitCanvas();
+    return;
+  }
+  const prev = flowView.scale;
+  const next = Math.min(1.8, Math.max(0.45, prev * (action === "in" ? 1.12 : 0.88)));
+  const view = $("#stage-view");
+  const mx = view.clientWidth / 2;
+  const my = view.clientHeight / 2;
+  flowView.panX = mx - (mx - flowView.panX) * (next / prev);
+  flowView.panY = my - (my - flowView.panY) * (next / prev);
+  flowView.scale = next;
+  applyView();
+}
+
+function fitCanvas() {
+  const nodes = (state.editing.flow && state.editing.flow.nodes) || [];
+  const view = $("#stage-view");
+  if (!nodes.length || !view) return;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  nodes.forEach((node) => {
+    const size = nodeSize(node);
+    minX = Math.min(minX, node.x);
+    minY = Math.min(minY, node.y);
+    maxX = Math.max(maxX, node.x + size.w);
+    maxY = Math.max(maxY, node.y + size.h + 22);
+  });
+  const scale = Math.min(1.2, (view.clientWidth - 48) / Math.max(80, maxX - minX), (view.clientHeight - 48) / Math.max(80, maxY - minY));
+  flowView.scale = Math.max(0.45, scale);
+  flowView.panX = 24 - minX * flowView.scale;
+  flowView.panY = 24 - minY * flowView.scale;
+  applyView();
+}
+
+function deleteSelectedEdge() {
+  const edge = flowView.selectedEdge;
+  const flow = state.editing.flow;
+  if (!edge || !flow) return;
+  const source = flow.nodes.find((node) => node.id === edge.from);
+  if (!source) return;
+  if (edge.port === "next") source.next = "";
+  else {
+    const branch = (source.branches || []).find((item) => item.id === edge.port);
+    if (branch) branch.to = "";
+  }
+  flowView.selectedEdge = null;
+  paintCanvas();
+  paintInspector();
+}
+
+function deleteSelection() {
+  if (flowView.selectedEdge) {
+    deleteSelectedEdge();
+    return;
+  }
+  if (!flowView.selected || flowView.selected === "start") return;
+  syncFlowFromDom($("#rule-form"));
+  removeCanvasNode(state.editing.flow, flowView.selected);
+  flowView.selected = null;
+  paintCanvas();
+  paintInspector();
+}
+
+function onDesignerKey(event) {
+  if (!$("#stage-view") || !state.editing) return;
+  if (event.target.matches("input, textarea, select")) return;
+  if (event.key === "Delete" || event.key === "Backspace") {
+    event.preventDefault();
+    deleteSelection();
+  }
+}
+
+function removeCanvasNode(flow, id) {
+  const node = (flow.nodes || []).find((item) => item.id === id);
+  if (!node || node.type === "start") return;
+  for (const item of flow.nodes) {
+    if (item.next === id) item.next = "";
+    for (const branch of item.branches || []) {
+      if (branch.to === id) branch.to = "";
+    }
+  }
+  flow.nodes = flow.nodes.filter((item) => item.id !== id);
+}
+
+function branchLabel(branch, whenCount) {
+  if (branch.kind === "else") return whenCount > 1 ? "其他" : "不满足";
+  if (whenCount === 1) return "满足";
+  const value = branch.op === "exists" || branch.op === "not_exists" ? "" : " " + (branch.value || "");
+  return opLabel(branch.op || "eq") + value;
+}
+
+function syncFlowFromDom(form) {
+  const flow = state.editing && state.editing.flow;
+  if (!flow || !form) return;
+  form.querySelectorAll("[data-field-row]").forEach((row) => {
+    const field = (flow.fields || []).find((item) => item.id === row.dataset.fieldRow);
+    const input = row.querySelector("[data-k=key]");
+    if (field && input) field.key = input.value.trim();
+  });
+  form.querySelectorAll("[data-node]").forEach((el) => {
+    const node = (flow.nodes || []).find((item) => item.id === el.dataset.node);
+    if (!node) return;
+    if (node.type === "judge") {
+      const select = el.querySelector("[data-k=field]");
+      if (select) node.field_id = select.value;
+    }
+    if (node.type === "return") {
+      const mode = el.querySelector("[data-k=mode]:checked");
+      node.status_code = Number(el.querySelector("[data-k=status]").value || 200);
+      node.delay_ms = Number(el.querySelector("[data-k=delay]").value || 0);
+      node.response_body = el.querySelector("[data-k=body]").value;
+      node.mode = mode ? mode.value : "mock";
+      node.proxy_url = el.querySelector("[data-k=proxy]").value.trim();
+      node.record = el.querySelector("[data-k=record]").checked;
+      node.response_headers = readMap(form, "headers-" + node.id);
+      node.state_set = readMap(form, "stateset-" + node.id);
+    }
+  });
+  form.querySelectorAll("[data-branch]").forEach((el) => {
+    for (const node of flow.nodes || []) {
+      const branch = (node.branches || []).find((item) => item.id === el.dataset.branch);
+      if (!branch || branch.kind === "else") continue;
+      branch.op = el.querySelector("[data-k=op]").value;
+      branch.value = el.querySelector("[data-k=value]").value;
+    }
+  });
+}
+
+function blankReturn(flow) {
+  return {
+    id: nextFlowId(flow),
+    type: "return",
+    status_code: 200,
+    delay_ms: 0,
+    response_headers: { "Content-Type": "application/json; charset=utf-8" },
+    response_body: '{\n  "ok": true\n}',
+    mode: "mock",
+    proxy_url: "",
+    record: false,
+    state_set: {},
+  };
+}
+
+function blankJudge(flow) {
+  return {
+    id: nextFlowId(flow),
+    type: "judge",
+    field_id: (flow.fields[0] && flow.fields[0].id) || "",
+    branches: [
+      { id: nextFlowId(flow), kind: "when", op: "eq", value: "", to: "" },
+      { id: nextFlowId(flow), kind: "else", to: "" },
+    ],
+  };
+}
+
+function condGroup(title, hint, name, items) {
+  const rows = (items || []).map((item, index) => condRow(item, name === "query" && index > 0)).join("");
+  return `<div class="match-block">
+    <div class="match-head"><strong>${title}</strong><button type="button" class="btn tiny" data-add-cond="${name}">添加</button></div>
+    <p class="hint">${hint}</p>
+    <div data-list="${name}">${rows || '<p class="muted empty-cond">这一类不限制</p>'}</div>
+  </div>`;
+}
+
+function queryJoin(join) {
+  const or = join === "or";
+  return `<label class="cond-join">与上一条<select data-k="join"><option value="and"${or ? "" : " selected"}>并且</option><option value="or"${or ? " selected" : ""}>或者</option></select></label>`;
+}
+
+function condRow(item, showJoin) {
   const op = item.op || "eq";
   const options = OPS.map(([value, label]) => `<option value="${value}"${value === op ? " selected" : ""}>${label}</option>`).join("");
   const disabled = op === "exists" || op === "not_exists" ? " disabled" : "";
-  return `<div class="cond">
+  const join = showJoin ? queryJoin(item.join) : "";
+  return `<div class="cond-item">${join}<div class="cond">
     <input data-k="key" value="${esc(item.key || "")}" placeholder="字段名">
     <select data-k="op">${options}</select>
     <input data-k="value" value="${esc(item.value || "")}" placeholder="期望值"${disabled}>
     <button type="button" class="btn tiny danger" data-remove>删除</button>
-  </div>`;
+  </div></div>`;
 }
 
 function kvRow(key, value) {
@@ -512,12 +1255,68 @@ function kvRow(key, value) {
 }
 
 function onEditorClick(e) {
+  const form = e.currentTarget;
+  const flow = state.editing && state.editing.flow;
+  const addField = e.target.closest("[data-add-field]");
+  if (addField && flow) {
+    syncFlowFromDom(form);
+    flow.fields.push({ id: nextFlowId(flow), source: addField.dataset.addField, key: "" });
+    rerenderFlow();
+    return;
+  }
+  const deleteField = e.target.closest("[data-flow-delete-field]");
+  if (deleteField && flow) {
+    syncFlowFromDom(form);
+    const id = deleteField.dataset.flowDeleteField;
+    flow.fields = flow.fields.filter((field) => field.id !== id);
+    flow.nodes.forEach((node) => {
+      if (node.field_id === id) node.field_id = "";
+    });
+    rerenderFlow();
+    return;
+  }
+  const addBranch = e.target.closest("[data-add-branch]");
+  if (addBranch && flow) {
+    syncFlowFromDom(form);
+    const node = flow.nodes.find((item) => item.id === addBranch.dataset.addBranch);
+    if (node) {
+      const branch = { id: nextFlowId(flow), kind: "when", op: "eq", value: "", to: "" };
+      const elseAt = (node.branches || []).findIndex((item) => item.kind === "else");
+      node.branches.splice(elseAt < 0 ? node.branches.length : elseAt, 0, branch);
+      rerenderFlow();
+    }
+    return;
+  }
+  const deleteBranch = e.target.closest("[data-flow-delete-branch]");
+  if (deleteBranch && flow) {
+    syncFlowFromDom(form);
+    for (const node of flow.nodes) {
+      const branch = (node.branches || []).find((item) => item.id === deleteBranch.dataset.flowDeleteBranch);
+      if (!branch) continue;
+      const whens = node.branches.filter((item) => item.kind !== "else");
+      if (whens.length <= 1) return;
+      node.branches = node.branches.filter((item) => item.id !== branch.id);
+      break;
+    }
+    rerenderFlow();
+    return;
+  }
+  const deleteNode = e.target.closest("[data-flow-delete-node]");
+  if (deleteNode && flow) {
+    syncFlowFromDom(form);
+    const id = deleteNode.dataset.flowDeleteNode;
+    removeCanvasNode(flow, id);
+    if (flowView.selected === id) flowView.selected = null;
+    rerenderFlow();
+    return;
+  }
   const addCond = e.target.closest("[data-add-cond]");
   if (addCond) {
     const box = e.currentTarget.querySelector(`[data-list="${addCond.dataset.addCond}"]`);
     const empty = box.querySelector(".empty-cond");
     if (empty) empty.remove();
-    box.insertAdjacentHTML("beforeend", condRow({ op: "eq" }));
+    const showJoin = addCond.dataset.addCond === "query" && box.querySelector(".cond");
+    box.insertAdjacentHTML("beforeend", condRow({ op: "eq", join: "and" }, showJoin));
   }
   const addKV = e.target.closest("[data-add-kv]");
   if (addKV) {
@@ -525,19 +1324,42 @@ function onEditorClick(e) {
     box.insertAdjacentHTML("beforeend", kvRow("", ""));
   }
   const remove = e.target.closest("[data-remove]");
-  if (remove) remove.closest(".cond, .kv").remove();
+  if (remove) {
+    const item = remove.closest(".cond-item, .kv") || remove.closest(".cond");
+    if (!item) return;
+    const list = item.parentElement;
+    item.remove();
+    syncQueryJoins(list);
+  }
+}
+
+function syncQueryJoins(list) {
+  if (!list || list.dataset.list !== "query") return;
+  list.querySelectorAll(".cond-item").forEach((item, index) => {
+    const join = item.querySelector(".cond-join");
+    if (index === 0) {
+      if (join) join.remove();
+      return;
+    }
+    if (!join) item.insertAdjacentHTML("afterbegin", queryJoin("and"));
+  });
 }
 
 function onEditorChange(e) {
+  syncFlowFromDom(e.currentTarget);
   if (e.target.matches("[data-k=op]")) {
-    const input = e.target.closest(".cond").querySelector("[data-k=value]");
-    const hide = e.target.value === "exists" || e.target.value === "not_exists";
-    input.disabled = hide;
+    const row = e.target.closest("[data-branch], .cond");
+    const input = row && row.querySelector("[data-k=value]");
+    if (input) {
+      const hide = e.target.value === "exists" || e.target.value === "not_exists";
+      input.disabled = hide;
+    }
   }
-  if (e.target.name === "mode") {
+  if (e.target.matches("[data-k=mode]")) {
+    const card = e.target.closest(".inspector-card");
     const proxy = e.target.value === "proxy";
-    e.currentTarget.querySelector(".proxy-fields").classList.toggle("hidden", !proxy);
-    e.currentTarget.querySelector(".response-fields").classList.toggle("hidden", proxy);
+    card.querySelector(".proxy-fields").classList.toggle("hidden", !proxy);
+    card.querySelector(".response-fields").classList.toggle("hidden", proxy);
   }
   if (e.target.name === "enabled") {
     e.currentTarget.querySelector(".rule-settings").classList.toggle("hidden", !e.target.checked);
@@ -549,7 +1371,37 @@ function field(form, name) {
 }
 
 function readForm(form) {
+  syncFlowFromDom(form);
+  const flow = state.editing.flow;
+  const ret = (flow.nodes || []).find((node) => node.type === "return") || {};
   const iface = state.iface;
+  const payload = {
+    fields: (flow.fields || []).map((field) => ({ id: field.id, source: field.source, key: field.key })),
+    nodes: (flow.nodes || []).map((node) => ({
+      id: node.id,
+      type: node.type,
+      x: node.x || 0,
+      y: node.y || 0,
+      placed: !!node.placed,
+      next: node.next || "",
+      field_id: node.field_id || "",
+      branches: (node.branches || []).map((branch) => ({
+        id: branch.id,
+        kind: branch.kind,
+        op: branch.op || "",
+        value: branch.value || "",
+        to: branch.to || "",
+      })),
+      status_code: node.status_code || 0,
+      delay_ms: node.delay_ms || 0,
+      response_headers: node.response_headers || {},
+      response_body: node.response_body || "",
+      mode: node.mode || "",
+      proxy_url: node.proxy_url || "",
+      record: !!node.record,
+      state_set: node.state_set || {},
+    })),
+  };
   return {
     id: Number(form.dataset.id || 0),
     interface_id: iface ? iface.id : 0,
@@ -559,27 +1411,33 @@ function readForm(form) {
     method: iface ? iface.method : field(form, "method").value.trim(),
     path: iface ? iface.path : field(form, "path").value.trim(),
     description: field(form, "description").value.trim(),
-    status_code: Number(field(form, "status_code").value || 200),
-    delay_ms: Number(field(form, "delay_ms").value || 0),
-    mode: field(form, "mode").value,
-    proxy_url: field(form, "proxy_url").value.trim(),
-    record: field(form, "record").checked,
-    response_body: field(form, "response_body").value,
-    query_match: readConds(form, "query"),
-    header_match: readConds(form, "header"),
-    body_match: readConds(form, "body"),
-    state_match: readConds(form, "state"),
-    response_headers: readMap(form, "headers"),
-    state_set: readMap(form, "stateset"),
+    status_code: Number(ret.status_code || 200),
+    delay_ms: Number(ret.delay_ms || 0),
+    mode: ret.mode || "mock",
+    proxy_url: ret.proxy_url || "",
+    record: !!ret.record,
+    response_body: ret.response_body || "",
+    query_match: [],
+    header_match: [],
+    body_match: [],
+    state_match: [],
+    response_headers: ret.response_headers || {},
+    state_set: ret.state_set || {},
+    flow: payload,
   };
 }
 
 function readConds(form, name) {
-  return $$(`[data-list="${name}"] .cond`, form).map((row) => ({
-    key: row.querySelector("[data-k=key]").value.trim(),
-    op: row.querySelector("[data-k=op]").value,
-    value: row.querySelector("[data-k=value]").value,
-  })).filter((item) => item.key);
+  return $$(`[data-list="${name}"] .cond`, form).map((row) => {
+    const item = {
+      key: row.querySelector("[data-k=key]").value.trim(),
+      op: row.querySelector("[data-k=op]").value,
+      value: row.querySelector("[data-k=value]").value,
+    };
+    const join = row.parentElement.querySelector("[data-k=join]");
+    if (join) item.join = join.value;
+    return item;
+  }).filter((item) => item.key);
 }
 
 function readMap(form, name) {
@@ -693,14 +1551,15 @@ async function onViewClick(e) {
   }
   const edit = e.target.closest("[data-edit]");
   if (edit) {
-    state.editing = state.rules.find((item) => String(item.id) === edit.dataset.edit);
+    const found = state.rules.find((item) => String(item.id) === edit.dataset.edit);
+    state.editing = { ...found, flow: cloneFlow(ensureFlow(found)) };
     render();
     return;
   }
   const copy = e.target.closest("[data-copy]");
   if (copy) {
     const rule = state.rules.find((item) => String(item.id) === copy.dataset.copy);
-    state.editing = { ...rule, id: 0, name: rule.name + " 副本" };
+    state.editing = { ...rule, id: 0, name: rule.name + " 副本", flow: cloneFlow(ensureFlow(rule)) };
     render();
     return;
   }

@@ -140,6 +140,9 @@ func (s *Store) Migrate() error {
 	if err := s.ensureColumn("rules", "interface_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("rules", "flow", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return s.backfillInterfaces()
 }
 
@@ -672,7 +675,7 @@ func (s *Store) Settings() (map[string]string, error) {
 	return out, rows.Err()
 }
 
-const ruleColumns = `id, name, enabled, priority, method, path, query_match, header_match, body_match, state_match, status_code, response_headers, response_body, delay_ms, mode, proxy_url, record, state_set, description, created_at, updated_at, interface_id`
+const ruleColumns = `id, name, enabled, priority, method, path, query_match, header_match, body_match, state_match, status_code, response_headers, response_body, delay_ms, mode, proxy_url, record, state_set, description, created_at, updated_at, interface_id, flow`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -681,11 +684,11 @@ type scanner interface {
 func scanRule(sc scanner) (model.Rule, error) {
 	var r model.Rule
 	var enabled, record int
-	var query, header, body, state, respHeaders, stateSet string
+	var query, header, body, state, respHeaders, stateSet, flow string
 	err := sc.Scan(
 		&r.ID, &r.Name, &enabled, &r.Priority, &r.Method, &r.Path,
 		&query, &header, &body, &state, &r.StatusCode, &respHeaders, &r.ResponseBody,
-		&r.DelayMS, &r.Mode, &r.ProxyURL, &record, &stateSet, &r.Description, &r.CreatedAt, &r.UpdatedAt, &r.InterfaceID,
+		&r.DelayMS, &r.Mode, &r.ProxyURL, &record, &stateSet, &r.Description, &r.CreatedAt, &r.UpdatedAt, &r.InterfaceID, &flow,
 	)
 	if err != nil {
 		return model.Rule{}, err
@@ -698,6 +701,9 @@ func scanRule(sc scanner) (model.Rule, error) {
 	_ = json.Unmarshal([]byte(state), &r.StateMatch)
 	_ = json.Unmarshal([]byte(respHeaders), &r.ResponseHeaders)
 	_ = json.Unmarshal([]byte(stateSet), &r.StateSet)
+	if strings.TrimSpace(flow) != "" {
+		_ = json.Unmarshal([]byte(flow), &r.Flow)
+	}
 	r.FillDefaults()
 	return r, nil
 }
@@ -708,18 +714,18 @@ func insertRule(e execer, r *model.Rule) error {
 		r.CreatedAt = now
 	}
 	r.UpdatedAt = now
-	query, header, body, state, respHeaders, stateSet, err := marshalRule(r)
+	query, header, body, state, respHeaders, stateSet, flow, err := marshalRule(r)
 	if err != nil {
 		return err
 	}
 	res, err := e.Exec(`INSERT INTO rules(
 		name, enabled, priority, method, path, query_match, header_match, body_match, state_match,
 		status_code, response_headers, response_body, delay_ms, mode, proxy_url, record, state_set,
-		description, created_at, updated_at, interface_id
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		description, created_at, updated_at, interface_id, flow
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.Name, bint(r.Enabled), r.Priority, r.Method, r.Path, query, header, body, state,
 		r.StatusCode, respHeaders, r.ResponseBody, r.DelayMS, r.Mode, r.ProxyURL, bint(r.Record), stateSet,
-		r.Description, r.CreatedAt, r.UpdatedAt, r.InterfaceID)
+		r.Description, r.CreatedAt, r.UpdatedAt, r.InterfaceID, flow)
 	if err != nil {
 		return err
 	}
@@ -733,18 +739,18 @@ func insertRule(e execer, r *model.Rule) error {
 
 func updateRule(e execer, r *model.Rule) error {
 	r.UpdatedAt = nowUTC()
-	query, header, body, state, respHeaders, stateSet, err := marshalRule(r)
+	query, header, body, state, respHeaders, stateSet, flow, err := marshalRule(r)
 	if err != nil {
 		return err
 	}
 	res, err := e.Exec(`UPDATE rules SET
 		name=?, enabled=?, priority=?, method=?, path=?, query_match=?, header_match=?, body_match=?, state_match=?,
 		status_code=?, response_headers=?, response_body=?, delay_ms=?, mode=?, proxy_url=?, record=?, state_set=?,
-		description=?, updated_at=?, interface_id=?
+		description=?, updated_at=?, interface_id=?, flow=?
 		WHERE id=?`,
 		r.Name, bint(r.Enabled), r.Priority, r.Method, r.Path, query, header, body, state,
 		r.StatusCode, respHeaders, r.ResponseBody, r.DelayMS, r.Mode, r.ProxyURL, bint(r.Record), stateSet,
-		r.Description, r.UpdatedAt, r.InterfaceID, r.ID)
+		r.Description, r.UpdatedAt, r.InterfaceID, flow, r.ID)
 	if err != nil {
 		return err
 	}
@@ -755,7 +761,7 @@ func updateRule(e execer, r *model.Rule) error {
 	return nil
 }
 
-func marshalRule(r *model.Rule) (query, header, body, state, respHeaders, stateSet string, err error) {
+func marshalRule(r *model.Rule) (query, header, body, state, respHeaders, stateSet, flow string, err error) {
 	r.FillDefaults()
 	qb, err := json.Marshal(r.QueryMatch)
 	if err != nil {
@@ -781,7 +787,16 @@ func marshalRule(r *model.Rule) (query, header, body, state, respHeaders, stateS
 	if err != nil {
 		return
 	}
-	return string(qb), string(hb), string(bb), string(sb), string(rh), string(ss), nil
+	flowText := ""
+	if r.Flow != nil {
+		fb, ferr := json.Marshal(r.Flow)
+		if ferr != nil {
+			err = ferr
+			return
+		}
+		flowText = string(fb)
+	}
+	return string(qb), string(hb), string(bb), string(sb), string(rh), string(ss), flowText, nil
 }
 
 func scanLog(sc scanner) (model.RequestLog, error) {
